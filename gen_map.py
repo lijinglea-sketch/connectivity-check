@@ -217,16 +217,24 @@ def _polyline_overlap(coords_a, coords_b):
     return close_count / len(sample) if sample else 0
 
 
-def auto_detect_replacements(deleted, added, b_ways, a_ways, b_nodes, a_nodes):
+def auto_detect_replacements(deleted, added, b_ways, a_ways, b_nodes, a_nodes,
+                              merge_map=None):
     """自动检测 deleted↔added 中的替换对（删除重绘场景）。
+    merge_map: 节点合并映射（蝴蝶型场景：交叉点内link两端合并后，
+               新旧link端点对齐，可被识别为替换对）。
     返回 dict: {old_id: new_id}
     """
+    if merge_map is None:
+        merge_map = {}
     replacements = {}
     used_added = set()
     for did in sorted(deleted):
         dw = b_ways[did]
-        d_start = b_nodes.get(dw['start'])
-        d_end = b_nodes.get(dw['end'])
+        # 应用 merge_map 获取合并后端点坐标
+        d_start_node = apply_merge(dw['start'], merge_map)
+        d_end_node = apply_merge(dw['end'], merge_map)
+        d_start = b_nodes.get(d_start_node) or a_nodes.get(d_start_node)
+        d_end = b_nodes.get(d_end_node) or a_nodes.get(d_end_node)
         if not d_start or not d_end:
             continue
         d_coords = [b_nodes[ref] for ref in dw['nd_refs'] if ref in b_nodes]
@@ -236,8 +244,11 @@ def auto_detect_replacements(deleted, added, b_ways, a_ways, b_nodes, a_nodes):
             if aid in used_added:
                 continue
             aw = a_ways[aid]
-            a_start = a_nodes.get(aw['start'])
-            a_end = a_nodes.get(aw['end'])
+            # 应用 merge_map 获取合并后端点坐标
+            a_start_node = apply_merge(aw['start'], merge_map)
+            a_end_node = apply_merge(aw['end'], merge_map)
+            a_start = a_nodes.get(a_start_node) or b_nodes.get(a_start_node)
+            a_end = a_nodes.get(a_end_node) or b_nodes.get(a_end_node)
             if not a_start or not a_end:
                 continue
 
@@ -441,8 +452,9 @@ def run_analysis(task_code, before_file, after_file):
 
     before_ids = set(b_ways.keys())
     after_ids = set(a_ways.keys())
-    deleted = before_ids - after_ids
-    added = after_ids - before_ids
+    # 蝴蝶型场景：交叉点内link不算真正的"新增/删除"，它们等价于节点
+    deleted = (before_ids - after_ids) - all_intersection_links
+    added = (after_ids - before_ids) - all_intersection_links
     modified = {wid for wid in before_ids & after_ids
                 if a_ways[wid]['task_code'] == TASK_CODE}
     changed_ids = deleted | added | modified
@@ -460,7 +472,8 @@ def run_analysis(task_code, before_file, after_file):
             trivial_modified.add(wid)
 
     # 自动检测替换对（删除重绘）
-    LINK_REPLACEMENTS = auto_detect_replacements(deleted, added, b_ways, a_ways, b_nodes, a_nodes)
+    LINK_REPLACEMENTS = auto_detect_replacements(deleted, added, b_ways, a_ways, b_nodes, a_nodes,
+                                                 merge_map=all_merge_map)
     replacement_ids = set(LINK_REPLACEMENTS.keys()) | set(LINK_REPLACEMENTS.values())
 
     affected_nodes = set()
