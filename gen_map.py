@@ -978,6 +978,31 @@ def run_analysis(task_code, before_file, after_file):
     center = [(min(all_lats) + max(all_lats)) / 2, (min(all_lons) + max(all_lons)) / 2]
     bounds = [[min(all_lats), min(all_lons)], [max(all_lats), max(all_lons)]]
 
+    # ── 构建全部变更清单（供前端"查看全部变更"按钮） ──
+    changes_list = []
+    shown_ids = set()
+    for old_id, new_id in LINK_REPLACEMENTS.items():
+        changes_list.append({'type': '替换', 'before': old_id, 'after': new_id})
+        shown_ids.update([old_id, new_id])
+    for wid in sorted(deleted - shown_ids):
+        changes_list.append({'type': '删除', 'before': wid, 'after': None})
+        shown_ids.add(wid)
+    for wid in sorted(added - shown_ids):
+        changes_list.append({'type': '新增', 'before': None, 'after': wid})
+        shown_ids.add(wid)
+    for wid in sorted(modified - all_intersection_links):
+        changes_list.append({'type': '修改', 'before': wid, 'after': wid})
+        shown_ids.add(wid)
+    for wid in sorted(all_intersection_links & (before_ids | after_ids)):
+        is_new = wid not in before_ids
+        is_del = wid not in after_ids
+        is_mod = wid in modified
+        suffix = '新增' if is_new else ('删除' if is_del else ('修改' if is_mod else ''))
+        label = f"交叉点内link{'·' + suffix if suffix else ''}"
+        changes_list.append({'type': label,
+                             'before': wid if wid in before_ids else None,
+                             'after': wid if wid in after_ids else None})
+
     map_data = {
         'center': center,
         'bounds': bounds,
@@ -987,6 +1012,7 @@ def run_analysis(task_code, before_file, after_file):
         'after_nodes': after_node_data,
         'groups': groups_data,
         'task_code': TASK_CODE,
+        'changes': changes_list,
     }
 
     # ── 生成 HTML ────────────────────────
@@ -1065,6 +1091,21 @@ body {{ font-family: -apple-system, "PingFang SC", "Helvetica Neue", sans-serif;
 .mode-btn {{ padding: 3px 10px; border: 1px solid #7986cb; border-radius: 4px; background: #fff; cursor: pointer; font-size: 12px; }}
 .mode-btn.active {{ background: #3f51b5; color: #fff; border-color: #3f51b5; }}
 .review-summary {{ padding: 10px; background: #fff3e0; border-bottom: 1px solid #ffe0b2; font-size: 13px; }}
+.no-critical-msg {{ padding: 20px; text-align: center; color: #2e7d32; font-size: 14px; background: #e8f5e9; border-bottom: 1px solid #c8e6c9; }}
+.changes-toggle-bar {{ padding: 8px 10px; background: #f5f5f5; border-bottom: 1px solid #e0e0e0; }}
+.changes-toggle-btn {{ width: 100%; padding: 6px 12px; border: 1px solid #bdbdbd; border-radius: 4px; background: #fff; cursor: pointer; font-size: 12px; color: #424242; }}
+.changes-toggle-btn:hover {{ background: #eeeeee; }}
+.changes-toggle-btn.active {{ background: #e3f2fd; border-color: #1976d2; color: #1976d2; }}
+.changes-panel {{ padding: 6px 10px; max-height: 400px; overflow-y: auto; }}
+.change-item {{ padding: 4px 8px; margin: 2px 0; border-radius: 3px; font-size: 11px; display: flex; align-items: center; gap: 6px; cursor: pointer; border-left: 3px solid #ddd; }}
+.change-item:hover {{ background: #e3f2fd; }}
+.change-item .change-type {{ font-weight: 600; min-width: 56px; font-size: 10px; padding: 1px 4px; border-radius: 2px; text-align: center; }}
+.change-type.ct-replace {{ background: #fff3e0; color: #e65100; }}
+.change-type.ct-delete {{ background: #ffebee; color: #c62828; }}
+.change-type.ct-add {{ background: #e8f5e9; color: #2e7d32; }}
+.change-type.ct-modify {{ background: #e3f2fd; color: #1565c0; }}
+.change-type.ct-intersection {{ background: #f3e5f5; color: #7b1fa2; }}
+.change-link-ids {{ font-family: monospace; font-size: 11px; }}
 .locate-btn {{ padding: 1px 6px; margin-left: 6px; border: 1px solid #999; border-radius: 3px; background: #fff; cursor: pointer; font-size: 11px; vertical-align: middle; }}
 .detail-btn {{
     font-size: 11px; padding: 2px 8px; border: 1px solid #1976d2;
@@ -1546,11 +1587,16 @@ function buildMapControls() {{
     document.getElementById('mapControls').innerHTML = html;
 }}
 
-let groupByMode = 'exit';  // 'exit' | 'entry'
+let groupByMode = 'exit';  // 'exit' | 'entry' | 'review'
+let showChangesPanel = false;
 
 function toggleGroupMode() {{
     groupByMode = groupByMode === 'exit' ? 'entry' : 'exit';
     buildSidebar();
+}}
+
+function hasCriticalItems() {{
+    return DATA.groups.some(g => g.entries.some(e => e.entry_priority === '重点'));
 }}
 
 function buildSidebar() {{
@@ -1563,6 +1609,22 @@ function buildSidebar() {{
       <button class="mode-btn ${{groupByMode === 'entry' ? 'active' : ''}}" onclick="groupByMode='entry';buildSidebar()">按入口</button>
       <button class="mode-btn ${{groupByMode === 'review' ? 'active' : ''}}" onclick="groupByMode='review';buildSidebar()">核实模式</button>
     </div>`;
+
+    if (!hasCriticalItems()) {{
+        html += `<div class="no-critical-msg">🎉 无重点核实变更</div>`;
+    }}
+
+    if (DATA.changes && DATA.changes.length > 0) {{
+        html += `<div class="changes-toggle-bar">
+          <button class="changes-toggle-btn ${{showChangesPanel ? 'active' : ''}}"
+            onclick="showChangesPanel=!showChangesPanel;buildSidebar()">
+            ${{showChangesPanel ? '📋 收起全部变更' : '📋 查看全部变更'}} (${{DATA.changes.length}}项)
+          </button>
+        </div>`;
+        if (showChangesPanel) {{
+            html += buildChangesPanel();
+        }}
+    }}
 
     if (groupByMode === 'review') {{
         buildSidebarByReview(html);
@@ -1695,6 +1757,37 @@ function buildSidebar() {{
     sidebar.innerHTML = html;
 }}
 
+function buildChangesPanel() {{
+    const typeClass = {{
+        '替换': 'ct-replace', '删除': 'ct-delete', '新增': 'ct-add', '修改': 'ct-modify',
+    }};
+    let html = '<div class="changes-panel">';
+    DATA.changes.forEach(c => {{
+        const cls = typeClass[c.type] || 'ct-intersection';
+        let linkHtml = '';
+        if (c.type === '替换') {{
+            linkHtml = `<span class="change-link-ids">
+              <span style="cursor:pointer;color:#c62828" onclick="event.stopPropagation();focusLink('${{c.before}}')">${{c.before}}</span>
+              → <span style="cursor:pointer;color:#2e7d32" onclick="event.stopPropagation();focusLink('${{c.after}}')">${{c.after}}</span></span>`;
+        }} else if (c.before && !c.after) {{
+            linkHtml = `<span class="change-link-ids" style="cursor:pointer;color:#c62828"
+              onclick="event.stopPropagation();focusLink('${{c.before}}')">${{c.before}}</span>`;
+        }} else if (!c.before && c.after) {{
+            linkHtml = `<span class="change-link-ids" style="cursor:pointer;color:#2e7d32"
+              onclick="event.stopPropagation();focusLink('${{c.after}}')">${{c.after}}</span>`;
+        }} else {{
+            linkHtml = `<span class="change-link-ids" style="cursor:pointer"
+              onclick="event.stopPropagation();focusLink('${{c.after || c.before}}')">${{c.after || c.before}}</span>`;
+        }}
+        html += `<div class="change-item">
+          <span class="change-type ${{cls}}">${{c.type}}</span>
+          ${{linkHtml}}
+        </div>`;
+    }});
+    html += '</div>';
+    return html;
+}}
+
 function buildSidebarByEntry(prefixHtml) {{
     // 按入口聚合：从所有 groups 中提取 entries，按 eid 分组
     const byEntry = {{}};
@@ -1795,7 +1888,7 @@ function buildSidebarByReview(prefixHtml) {{
     }});
 
     if (criticalItems.length === 0) {{
-        sidebar.innerHTML = prefixHtml + `<div style="padding:20px;color:#666;text-align:center">🎉 无需重点核实的条目</div>`;
+        sidebar.innerHTML = prefixHtml;
         return;
     }}
 
