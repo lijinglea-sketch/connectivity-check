@@ -1589,6 +1589,7 @@ function buildMapControls() {{
 
 let groupByMode = 'exit';  // 'exit' | 'entry' | 'review'
 let showChangesPanel = false;
+let showDetectionDetails = false;
 
 function toggleGroupMode() {{
     groupByMode = groupByMode === 'exit' ? 'entry' : 'exit';
@@ -1610,10 +1611,13 @@ function buildSidebar() {{
       <button class="mode-btn ${{groupByMode === 'review' ? 'active' : ''}}" onclick="groupByMode='review';buildSidebar()">核实模式</button>
     </div>`;
 
-    if (!hasCriticalItems()) {{
+    const noCritical = !hasCriticalItems();
+
+    if (noCritical) {{
         html += `<div class="no-critical-msg">🎉 无重点核实变更</div>`;
     }}
 
+    // 查看全部变更按钮
     if (DATA.changes && DATA.changes.length > 0) {{
         html += `<div class="changes-toggle-bar">
           <button class="changes-toggle-btn ${{showChangesPanel ? 'active' : ''}}"
@@ -1623,6 +1627,20 @@ function buildSidebar() {{
         </div>`;
         if (showChangesPanel) {{
             html += buildChangesPanel();
+        }}
+    }}
+
+    // 无重点核实时，检测详情默认收起，点击可展开
+    if (noCritical && DATA.groups.length > 0) {{
+        html += `<div class="changes-toggle-bar">
+          <button class="changes-toggle-btn ${{showDetectionDetails ? 'active' : ''}}"
+            onclick="showDetectionDetails=!showDetectionDetails;buildSidebar()">
+            ${{showDetectionDetails ? '🔍 收起检测详情' : '🔍 查看检测详情'}} (${{DATA.groups.length}}组)
+          </button>
+        </div>`;
+        if (!showDetectionDetails) {{
+            sidebar.innerHTML = html;
+            return;
         }}
     }}
 
@@ -1761,23 +1779,24 @@ function buildChangesPanel() {{
     const typeClass = {{
         '替换': 'ct-replace', '删除': 'ct-delete', '新增': 'ct-add', '修改': 'ct-modify',
     }};
+    const wid = id => id ? 'w' + id : '';
     let html = '<div class="changes-panel">';
     DATA.changes.forEach(c => {{
         const cls = typeClass[c.type] || 'ct-intersection';
         let linkHtml = '';
         if (c.type === '替换') {{
             linkHtml = `<span class="change-link-ids">
-              <span style="cursor:pointer;color:#c62828" onclick="event.stopPropagation();focusLink('${{c.before}}')">${{c.before}}</span>
-              → <span style="cursor:pointer;color:#2e7d32" onclick="event.stopPropagation();focusLink('${{c.after}}')">${{c.after}}</span></span>`;
+              <span style="cursor:pointer;color:#c62828" onclick="event.stopPropagation();focusLink('${{c.before}}')">${{wid(c.before)}}</span>
+              → <span style="cursor:pointer;color:#2e7d32" onclick="event.stopPropagation();focusLink('${{c.after}}')">${{wid(c.after)}}</span></span>`;
         }} else if (c.before && !c.after) {{
             linkHtml = `<span class="change-link-ids" style="cursor:pointer;color:#c62828"
-              onclick="event.stopPropagation();focusLink('${{c.before}}')">${{c.before}}</span>`;
+              onclick="event.stopPropagation();focusLink('${{c.before}}')">${{wid(c.before)}}</span>`;
         }} else if (!c.before && c.after) {{
             linkHtml = `<span class="change-link-ids" style="cursor:pointer;color:#2e7d32"
-              onclick="event.stopPropagation();focusLink('${{c.after}}')">${{c.after}}</span>`;
+              onclick="event.stopPropagation();focusLink('${{c.after}}')">${{wid(c.after)}}</span>`;
         }} else {{
             linkHtml = `<span class="change-link-ids" style="cursor:pointer"
-              onclick="event.stopPropagation();focusLink('${{c.after || c.before}}')">${{c.after || c.before}}</span>`;
+              onclick="event.stopPropagation();focusLink('${{c.after || c.before}}')">${{wid(c.after || c.before)}}</span>`;
         }}
         html += `<div class="change-item">
           <span class="change-type ${{cls}}">${{c.type}}</span>
