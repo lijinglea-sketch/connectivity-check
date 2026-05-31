@@ -103,8 +103,11 @@ def show_results(html, summary):
 
 
 # ── 主区域 ──
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+_XML_DIR = os.path.join(_SCRIPT_DIR, "xml_data")
+
 if run_btn:
-    tmp_dir = tempfile.mkdtemp(prefix="conn_check_")
+    os.makedirs(_XML_DIR, exist_ok=True)
 
     if input_mode == "📂 上传 XML 文件":
         # 文件上传模式
@@ -112,15 +115,26 @@ if run_btn:
             st.error("请上传变更前 (draw) 和变更后 (submit) 两个 XML 文件")
             st.stop()
 
-        draw_path = os.path.join(tmp_dir, "draw.xml")
-        submit_path = os.path.join(tmp_dir, "submit.xml")
+        # 先写到临时位置提取 task_code，再用规范文件名落盘
+        tmp_dir = tempfile.mkdtemp(prefix="conn_check_")
+        tmp_draw = os.path.join(tmp_dir, "draw.xml")
+        tmp_submit = os.path.join(tmp_dir, "submit.xml")
+        with open(tmp_draw, "wb") as f:
+            f.write(draw_file.getvalue())
+        with open(tmp_submit, "wb") as f:
+            f.write(submit_file.getvalue())
+
+        # 从 XML 中自动提取 task_code
+        tc = extract_task_code_from_xml(tmp_submit) or extract_task_code_from_xml(tmp_draw) or "UNKNOWN"
+
+        # 用规范文件名保存到本地
+        draw_path = os.path.join(_XML_DIR, f"taskcode={tc}&action=draw.xml")
+        submit_path = os.path.join(_XML_DIR, f"taskcode={tc}&action=submit.xml")
         with open(draw_path, "wb") as f:
             f.write(draw_file.getvalue())
         with open(submit_path, "wb") as f:
             f.write(submit_file.getvalue())
-
-        # 从 XML 中自动提取 task_code
-        tc = extract_task_code_from_xml(submit_path) or extract_task_code_from_xml(draw_path) or "UNKNOWN"
+        st.caption(f"📁 XML 已保存到 `{_XML_DIR}`")
 
     else:
         # API 拉取模式
@@ -136,9 +150,10 @@ if run_btn:
             try:
                 from fetch_task_data import fetch_task_data
                 task_id, draw_path, submit_path = fetch_task_data(
-                    tc, cookie.strip(), output_dir=tmp_dir
+                    tc, cookie.strip(), output_dir=_XML_DIR
                 )
                 st.success(f"数据拉取完成，task_id={task_id}")
+                st.caption(f"📁 XML 已保存到 `{_XML_DIR}`")
             except Exception as e:
                 st.error(f"数据拉取失败：{e}")
                 st.stop()
