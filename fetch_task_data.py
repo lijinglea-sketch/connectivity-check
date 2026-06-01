@@ -31,6 +31,11 @@ def _fetch(url, headers):
         return data.decode("utf-8")
 
 
+class CookieInvalidError(RuntimeError):
+    """Cookie 无效或过期"""
+    pass
+
+
 def get_task_id(task_code, cookie):
     url = (
         f"https://roadtask.map.xiaojukeji.com"
@@ -38,11 +43,46 @@ def get_task_id(task_code, cookie):
         f"?task_code={task_code}"
     )
     headers = _make_headers(cookie)
-    body = _fetch(url, headers)
-    data = json.loads(body)
-    if data.get("status") != 0:
+    try:
+        body = _fetch(url, headers)
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403):
+            raise CookieInvalidError(
+                "Cookie 已失效或无权限访问 roadtask。\n"
+                "可能原因：\n"
+                "1. ticket 已过期，请重新从浏览器复制 Cookie\n"
+                "2. 当前网络环境（如外网/VPN）无法访问内网服务\n"
+                "3. task_code 不属于当前 Cookie 对应的项目\n\n"
+                "建议：请有内网权限的同事帮忙拉取后，使用「分享结果」功能。"
+            )
+        elif e.code == 404:
+            raise RuntimeError(f"task_code={task_code} 不存在或已删除")
+        else:
+            raise RuntimeError(f"HTTP {e.code}: {e.reason}")
+    except urllib.error.URLError as e:
         raise RuntimeError(
-            f"获取 task_id 失败: {data.get('msg', '未知错误')}\n"
+            f"网络请求失败: {e.reason}\n"
+            "可能原因：当前环境无法访问 roadtask.map.xiaojukeji.com（外网限制/VPN）\n"
+            "建议：请有内网权限的同事帮忙拉取后，使用「分享结果」功能。"
+        )
+
+    try:
+        data = json.loads(body)
+    except json.JSONDecodeError:
+        raise RuntimeError(
+            "返回数据不是有效的 JSON，可能是登录页或验证码页面。\n"
+            "请确认 Cookie 是否包含有效的 ticket 字段。"
+        )
+
+    if data.get("status") != 0:
+        msg = data.get('msg', '未知错误')
+        if '登录' in msg or '权限' in msg or 'ticket' in msg.lower():
+            raise CookieInvalidError(
+                f"接口返回错误: {msg}\n"
+                "Cookie 可能已过期，请重新从浏览器复制完整的 Cookie（含 ticket）。"
+            )
+        raise RuntimeError(
+            f"获取 task_id 失败: {msg}\n"
             f"task_code: {task_code}\n"
             f"可能原因: 1) Cookie/ticket 过期  "
             f"2) task_code 不属于当前 Cookie 的项目  "
@@ -61,7 +101,20 @@ def get_task_osm(task_code, task_id, action, cookie):
         f"?taskcode={task_code}&taskid={task_id}&action={action}"
     )
     headers = _make_headers(cookie)
-    return _fetch(url, headers)
+    try:
+        return _fetch(url, headers)
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403):
+            raise CookieInvalidError(
+                "拉取 OSM 数据失败：Cookie 已失效或无权限。\n"
+                "建议：请有内网权限的同事帮忙拉取后，使用「分享结果」功能。"
+            )
+        raise RuntimeError(f"拉取 OSM 数据失败: HTTP {e.code}")
+    except urllib.error.URLError as e:
+        raise RuntimeError(
+            f"网络请求失败: {e.reason}\n"
+            "可能原因：当前环境无法访问 roadtask 内网服务。"
+        )
 
 
 def fetch_task_data(task_code, cookie, output_dir=None):

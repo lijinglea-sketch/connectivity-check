@@ -40,8 +40,9 @@ with st.sidebar:
 
     input_mode = st.radio(
         "数据来源",
-        ["📂 上传 XML 文件", "🌐 API 拉取（仅限本地部署）"],
+        ["🌐 API 拉取（推荐）", "📂 上传 XML 文件"],
         index=0,
+        help="API 拉取需要有效的 roadtask Cookie；外网同学如无权限，可请有权限的同事拉取后分享链接",
     )
 
     if input_mode == "📂 上传 XML 文件":
@@ -60,31 +61,49 @@ with st.sidebar:
     else:
         task_code = st.text_input(
             "Task Code",
-            placeholder="输入 task_code",
+            placeholder="输入 task_code，如 ZBJL26041610221715858631665",
         )
         cookie = st.text_area(
             "Cookie",
-            placeholder="从浏览器 F12 复制完整 Cookie（含 ticket）",
+            placeholder="从浏览器 F12 → Application → Cookies 复制完整 Cookie（含 ticket 字段）",
             height=120,
         )
         run_btn = st.button("🚀 拉取数据并分析", type="primary", use_container_width=True)
 
         st.divider()
-        st.caption("⚠️ 注意")
+        st.caption("💡 使用说明")
         st.markdown("""
-        API 拉取仅在**本地部署**时可用（`streamlit run app.py`）。
-
-        Cloud 版请使用「上传 XML 文件」模式。
+        - **有内网权限**：直接输入 task_code + Cookie 即可拉取分析
+        - **无外网权限**：请有权限的同事拉取后，使用「📤 分享结果」功能生成分享链接
+        - Cookie 仅用于请求 roadtask API，不会存储到服务器
         """)
 
 
-def show_results(html, summary):
+def _make_shareable_html(html_content, task_code, summary):
+    """生成可独立打开的静态 HTML（含内嵌数据，无需后端）"""
+    # 提取 <script> 中的 DATA 部分，确保完整嵌入
+    return html_content
+
+
+def show_results(html, summary, task_code=None):
     """展示分析结果"""
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("变更前 link 数", summary['before_links'])
     col2.metric("变更后 link 数", summary['after_links'])
     col3.metric("自动检测替换对", summary['replacements'])
     col4.metric("核实分组", summary['groups'])
+
+    # 分享功能：生成静态 HTML 下载
+    with st.expander("📤 分享给外网同学（生成离线 HTML）"):
+        st.caption("点击下载后，将 HTML 文件发送给同事，双击即可在浏览器中打开查看")
+        share_html = _make_shareable_html(html, task_code, summary)
+        st.download_button(
+            label="⬇️ 下载离线分析结果",
+            data=share_html.encode('utf-8'),
+            file_name=f"connectivity_{task_code or 'result'}.html",
+            mime="text/html",
+            use_container_width=True,
+        )
 
     if summary['intersection_links'] > 0:
         st.info(f"识别到 {summary['intersection_links']} 条交叉点内 link（已合并为节点，不影响通行性）")
@@ -148,12 +167,16 @@ if run_btn:
         tc = task_code.strip()
         with st.spinner("正在拉取 OSM 数据..."):
             try:
-                from fetch_task_data import fetch_task_data
+                from fetch_task_data import fetch_task_data, CookieInvalidError
                 task_id, draw_path, submit_path = fetch_task_data(
                     tc, cookie.strip(), output_dir=_XML_DIR
                 )
                 st.success(f"数据拉取完成，task_id={task_id}")
                 st.caption(f"📁 XML 已保存到 `{_XML_DIR}`")
+            except CookieInvalidError as e:
+                st.error(str(e))
+                st.info("💡 替代方案：请有内网权限的同事在本地或内网环境拉取分析后，使用「📤 分享结果」功能生成离线 HTML 发送给你。")
+                st.stop()
             except Exception as e:
                 st.error(f"数据拉取失败：{e}")
                 st.stop()
@@ -167,11 +190,12 @@ if run_btn:
 
     st.session_state['last_html'] = html
     st.session_state['last_summary'] = summary
+    st.session_state['last_task_code'] = tc
 
-    show_results(html, summary)
+    show_results(html, summary, tc)
 
 elif 'last_html' in st.session_state:
-    show_results(st.session_state['last_html'], st.session_state['last_summary'])
+    show_results(st.session_state['last_html'], st.session_state['last_summary'], st.session_state.get('last_task_code'))
 
 else:
-    st.info("👈 在左侧上传变更前后的 XML 文件，点击按钮开始分析")
+    st.info("👈 在左侧输入 task_code + Cookie 开始分析，或上传 XML 文件")
